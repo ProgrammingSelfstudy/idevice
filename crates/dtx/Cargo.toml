@@ -1,0 +1,19 @@
+[package]
+name = "dtx"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tunnel = { path = "../tunnel" }
+tokio = { workspace = true }
+plist = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+usbmuxd = { path = "../usbmuxd" }
+pairing = { path = "../pairing" }
+rsd = { path = "../rsd" }
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

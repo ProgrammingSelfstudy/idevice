@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "afc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pairing",
+ "plist",
+ "rsd",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tunnel",
+ "usbmuxd",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -254,6 +270,23 @@ checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
 dependencies = [
  "equivalent",
  "hashbrown",
+]
+
+[[package]]
+name = "installation_proxy"
+version = "0.1.0"
+dependencies = [
+ "afc",
+ "anyhow",
+ "pairing",
+ "plist",
+ "rsd",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tunnel",
+ "usbmuxd",
 ]
 
 [[package]]

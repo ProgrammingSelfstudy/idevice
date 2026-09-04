@@ -1,0 +1,20 @@
+[package]
+name = "installation_proxy"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tunnel = { path = "../tunnel" }
+rsd = { path = "../rsd" }
+tokio = { workspace = true }
+plist = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+usbmuxd = { path = "../usbmuxd" }
+pairing = { path = "../pairing" }
+afc = { path = "../afc" }
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

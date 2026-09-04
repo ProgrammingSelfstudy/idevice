@@ -5,6 +5,7 @@
 
 mod http2;
 mod http2_frame;
+mod shim;
 mod xpc_format;
 
 use std::collections::HashMap;
@@ -13,6 +14,8 @@ use std::net::Ipv6Addr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tunnel::TunnelStack;
 use xpc_format::{flags, Dictionary, XpcMessage, XpcObject};
+
+pub use shim::ShimServiceConnection;
 
 const ROOT_CHANNEL: u32 = 1;
 const REPLY_CHANNEL: u32 = 3;
@@ -33,6 +36,8 @@ pub enum RsdError {
     ConnectionClosed,
     #[error("RSD handshake response missing expected field: {0}")]
     MissingField(&'static str),
+    #[error("shim service reported a StartService error: {0}")]
+    ShimStartServiceError(String),
 }
 
 pub type Result<T> = std::result::Result<T, RsdError>;

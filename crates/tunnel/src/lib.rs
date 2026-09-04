@@ -7,9 +7,13 @@
 
 mod cdtunnel;
 mod raw_packet;
+mod smol_device;
+mod stack;
 
 pub use cdtunnel::TunnelInfo;
 pub use lockdownd::Transport;
+pub use smoltcp::iface::SocketHandle;
+pub use stack::TunnelStack;
 
 use pairing::PairingFile;
 
@@ -31,6 +35,10 @@ pub enum TunnelError {
     BadHandshake(String),
     #[error("TLS setup failed: {0}")]
     Tls(String),
+    #[error("TCP error: {0}")]
+    Tcp(String),
+    #[error("timed out waiting for the tunnel TCP stack to make progress")]
+    Timeout,
 }
 
 pub type Result<T> = std::result::Result<T, TunnelError>;

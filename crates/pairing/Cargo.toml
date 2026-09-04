@@ -1,0 +1,8 @@
+[package]
+name = "pairing"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+plist = { workspace = true }
+thiserror = { workspace = true }

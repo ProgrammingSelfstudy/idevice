@@ -5,10 +5,14 @@ edition.workspace = true
 
 [dependencies]
 usbmuxd = { path = "../usbmuxd" }
+pairing = { path = "../pairing" }
 tokio = { workspace = true }
 plist = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+rustls = { version = "0.23", features = ["ring"], default-features = false }
+tokio-rustls = "0.26"
+rustls-pki-types = "1"
 
 [dev-dependencies]
 anyhow.workspace = true

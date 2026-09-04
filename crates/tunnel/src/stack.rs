@@ -178,6 +178,7 @@ where
 
         let socket = self.sockets.get_mut::<tcp::Socket>(handle);
         if !socket.may_recv() && !socket.can_recv() {
+            tracing::debug!(state = ?socket.state(), "recv: peer closed, no more data");
             return Ok(Vec::new()); // 对端已经关闭,没有更多数据了
         }
         let mut buf = vec![0u8; TCP_BUFFER_SIZE];
@@ -186,6 +187,22 @@ where
             .map_err(|e| TunnelError::Tcp(format!("recv failed: {e}")))?;
         buf.truncate(n);
         Ok(buf)
+    }
+
+    /// 主动关闭:发我们自己这头的 FIN,等到完全 Closed(或者对端早已经
+    /// Closed,不需要再等)再把 socket 从集合里摘掉。用在检测到对端已经
+    /// 半关闭(CLOSE-WAIT)之后——不主动完成关闭握手的话,设备那边可能一直
+    /// 认为这条连接还占着,拒绝/晾着后续的新连接。
+    pub async fn close(&mut self, handle: SocketHandle) -> Result<(), TunnelError> {
+        {
+            let socket = self.sockets.get_mut::<tcp::Socket>(handle);
+            socket.close();
+        }
+        let result = self
+            .pump_until(|sockets| sockets.get_mut::<tcp::Socket>(handle).state() == tcp::State::Closed)
+            .await;
+        self.sockets.remove(handle);
+        result
     }
 }
 

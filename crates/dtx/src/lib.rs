@@ -48,6 +48,43 @@ where
         }
     }
 
+    /// 交换 `_notifyOfPublishedCapabilities:`——连接建立后、开任何具名频道
+    /// 之前都要做的一步,不是 sysmontap 专属的。参考 pymobiledevice3(
+    /// `dtx/connection.py` 的 `DTXConnection.connect()`)可以确认这一步对它
+    /// 所有 instruments 连接都是必做的,默认能力表里显式声明
+    /// `"com.apple.private.DTXBlockCompression": 0`——即"不支持块压缩",
+    /// 这也是之前在 `idevice-perf` 里怀疑过的"块压缩导致解不出 tap 数据"
+    /// 那个坑的正确解法:不是要在解码层猜压缩算法,是压根不让设备启用压缩。
+    ///
+    /// 设备自己也会在连接建立后主动(未经请求)在 0 号频道推一条同名的
+    /// `_notifyOfPublishedCapabilities:` 消息——不消费掉这条,后面第一次读
+    /// 0 号频道(比如 `make_channel` 里等开频道确认)就会把它错认成别的回复。
+    pub async fn perform_handshake(&mut self) -> Result<()> {
+        let mut caps = plist::Dictionary::new();
+        caps.insert(
+            "com.apple.private.DTXBlockCompression".into(),
+            plist::Value::Integer(0i64.into()),
+        );
+        caps.insert(
+            "com.apple.private.DTXConnection".into(),
+            plist::Value::Integer(1i64.into()),
+        );
+
+        self.call_method(
+            CONTROL_CHANNEL,
+            Some("_notifyOfPublishedCapabilities:"),
+            vec![AuxValue::archived(plist::Value::Dictionary(caps))],
+            false,
+        )
+        .await?;
+
+        let msg = self.read_message(CONTROL_CHANNEL).await?;
+        if msg.expects_reply {
+            self.reply_to(&msg).await?;
+        }
+        Ok(())
+    }
+
     /// 请求打开一个具名服务频道(比如
     /// `"com.apple.instruments.server.services.sysmontap"`),返回后续调用要
     /// 用的频道句柄。

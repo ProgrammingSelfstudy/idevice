@@ -17,3 +17,4 @@ rsd = { path = "../rsd" }
 anyhow.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-log = "0.2"

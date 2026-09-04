@@ -1,0 +1,15 @@
+[package]
+name = "lockdownd"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+usbmuxd = { path = "../usbmuxd" }
+tokio = { workspace = true }
+plist = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

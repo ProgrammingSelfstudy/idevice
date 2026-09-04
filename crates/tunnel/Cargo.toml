@@ -1,0 +1,20 @@
+[package]
+name = "tunnel"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+usbmuxd = { path = "../usbmuxd" }
+lockdownd = { path = "../lockdownd" }
+pairing = { path = "../pairing" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio-rustls = "0.26"
+rustls-pki-types = "1"
+
+[dev-dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

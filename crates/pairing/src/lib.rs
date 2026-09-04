@@ -5,12 +5,16 @@
 //! `examples/probe.rs`):9 个 key 的 plist dict,`*Certificate`/`*PrivateKey`
 //! 这几个字段都是 PEM 文本(不是 DER 二进制),存成 plist 的 `Data` 类型。
 
+pub mod tls;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PairingError {
     #[error("failed to decode pair record plist: {0}")]
     PlistDecode(#[source] plist::Error),
     #[error("pair record missing or has wrong type for field: {0}")]
     MissingField(&'static str),
+    #[error("TLS setup failed: {0}")]
+    Tls(String),
 }
 
 pub type Result<T> = std::result::Result<T, PairingError>;

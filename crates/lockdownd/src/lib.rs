@@ -8,7 +8,6 @@
 //! 上层 `get_value`/`query_type` 这些方法完全不用感知连接是不是加密的。
 
 mod frame;
-mod tls;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
@@ -89,7 +88,7 @@ impl LockdownClient {
             }
         }
 
-        let config = tls::build_client_config(pairing_file)?;
+        let config = pairing::tls::build_client_config(pairing_file)?;
         let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
         // 服务端证书反正不校验(见 tls.rs),这个 "Device" 只是 rustls API 要求
         // 必须传一个 ServerName,内容本身不影响握手结果。
@@ -107,6 +106,25 @@ impl LockdownClient {
         self.stream = Box::new(tls_stream);
 
         Ok(())
+    }
+
+    /// 请求设备开一个服务,拿到转发端口。要走 TLS 会话之后才能用(未配对/未
+    /// `start_session` 的连接问不到大多数服务)。返回 `(port, ssl)`——`ssl`
+    /// 表示连到这个端口之后还要不要再包一层 TLS(USB 直连场景通常是
+    /// `false`,idevice 的注释里也提过这一点,这次重写在真机上验证过是这样)。
+    pub async fn start_service(&mut self, identifier: &str) -> Result<(u16, bool)> {
+        let mut req = plist::Dictionary::new();
+        req.insert("Request".into(), "StartService".into());
+        req.insert("Service".into(), identifier.into());
+        frame::write_plist(&mut self.stream, req).await?;
+
+        let res = frame::read_plist(&mut self.stream).await?;
+        let ssl = matches!(res.get("EnableServiceSSL"), Some(plist::Value::Boolean(true)));
+        let port = res
+            .get("Port")
+            .and_then(|v| v.as_unsigned_integer())
+            .ok_or_else(|| LockdownError::UnexpectedResponse("missing Port".into()))?;
+        Ok((port as u16, ssl))
     }
 
     /// `key`/`domain` 都传 `None` 会拿到整棵设备信息树。不需要配对——lockdownd

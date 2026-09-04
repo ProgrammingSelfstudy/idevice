@@ -50,7 +50,15 @@ where
 
         let client_addr = parse_v6(&info.client_address)?;
 
-        let mut device = SmolDevice::new(info.mtu as usize);
+        // 真机验证过的坑:CDTunnel 握手协商出来的 `info.mtu`(默认 16000)只是
+        // "单次原始 IPv6 包写入这条隧道连接允许多大",不代表底层真实链路真能
+        // 稳定送达那么大的包——装大文件(AFC 上传 .ipa)时用 16000 算出的
+        // ~15940 字节 TCP 分段,前几个包发出去后设备再也没回过任何 ACK,只有
+        // 反复超时重传,最终整个操作失败;把 smoltcp 自己算分段用的 MTU 单独
+        // 降到 IPv6 强制要求的最小值 1280(不影响隧道帧本身的读写,那边线上
+        // 每个 IPv6 包的长度是自描述的,收发双方各自决定怎么分段跟对方无关),
+        // 同样的 100MB 上传就能完整跑完、正常收到 ACK。
+        let mut device = SmolDevice::new(1280);
         let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
         let mut iface = Interface::new(config, &mut device, SmolInstant::from_millis(0));
         iface.update_ip_addrs(|addrs| {

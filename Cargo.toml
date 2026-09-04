@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/usbmuxd"]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros"] }
+plist = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

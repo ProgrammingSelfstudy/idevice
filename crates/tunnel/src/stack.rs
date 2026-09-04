@@ -197,17 +197,27 @@ where
         Ok(buf)
     }
 
-    /// 主动关闭:发我们自己这头的 FIN,等到完全 Closed(或者对端早已经
-    /// Closed,不需要再等)再把 socket 从集合里摘掉。用在检测到对端已经
-    /// 半关闭(CLOSE-WAIT)之后——不主动完成关闭握手的话,设备那边可能一直
-    /// 认为这条连接还占着,拒绝/晾着后续的新连接。
+    /// 主动关闭:发我们自己这头的 FIN,等四次挥手真正走完(到
+    /// `TimeWait`——双方的 FIN 都已经发出并且被对方确认了,这已经是设备
+    /// 那边能观察到的"连接彻底关闭"状态)就把 socket 从集合里摘掉。用在
+    /// 检测到对端已经半关闭(CLOSE-WAIT)之后——不主动完成关闭握手的话,
+    /// 设备那边可能一直认为这条连接还占着,拒绝/晾着后续的新连接。
+    ///
+    /// 故意不等到 `Closed`:真机测过四次挥手本身几毫秒就能走完,但 smoltcp
+    /// 要等 `TimeWait` 自己的计时器(约 10 秒,TCP 规范里防止旧连接延迟包
+    /// 干扰新连接用的等待期)才会把状态从 `TimeWait` 自动推进到
+    /// `Closed`——握手早就结束了,没必要在这里傻等那个计时器,每次
+    /// `close()` 平白多花 10 秒。
     pub async fn close(&mut self, handle: SocketHandle) -> Result<(), TunnelError> {
         {
             let socket = self.sockets.get_mut::<tcp::Socket>(handle);
             socket.close();
         }
         let result = self
-            .pump_until(|sockets| sockets.get_mut::<tcp::Socket>(handle).state() == tcp::State::Closed)
+            .pump_until(|sockets| {
+                let state = sockets.get_mut::<tcp::Socket>(handle).state();
+                matches!(state, tcp::State::TimeWait | tcp::State::Closed)
+            })
             .await;
         self.sockets.remove(handle);
         result

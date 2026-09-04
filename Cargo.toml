@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/usbmuxd", "crates/lockdownd", "crates/pairing", "crates/tunnel"]
+members = ["crates/usbmuxd", "crates/lockdownd", "crates/pairing", "crates/tunnel", "crates/rsd"]
 
 [workspace.package]
 edition = "2024"

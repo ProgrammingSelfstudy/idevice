@@ -11,7 +11,15 @@ async fn main() -> anyhow::Result<()> {
 
     let mut usbmuxd = usbmuxd::UsbmuxdClient::connect().await?;
     let devices = usbmuxd.list_devices().await?;
-    let device = devices.first().expect("plug in a device").clone();
+    let target_udid = std::env::args().skip_while(|a| a != "-s").nth(1);
+    let device = match target_udid {
+        Some(udid) => devices
+            .iter()
+            .find(|d| d.udid == udid)
+            .expect("no connected device with that udid")
+            .clone(),
+        None => devices.first().expect("plug in a device").clone(),
+    };
     println!("device: {}", device.udid);
 
     let pair_record_bytes = usbmuxd.read_pair_record(&device.udid).await?;
@@ -38,25 +46,47 @@ async fn main() -> anyhow::Result<()> {
         dtx.perform_handshake().await?;
         println!("capabilities handshake done");
 
+        // 真正的根因:跟 pymobiledevice3 抓包比对才发现,之前一直传一个"退化"
+        // 配置(`procAttrs: ["pid"]`,单独一个属性名)——设备自己确认这个名字
+        // 合法,但真实客户端(Instruments/pymobiledevice3)从来不会这么问,
+        // 而是把 `sysmonProcessAttributes`/`sysmonSystemAttributes` 查到的
+        // 全部属性名原样传回去。退化配置会在 ack 之后立刻被设备挂断,完整配置
+        // 则完全不会——这不是协议格式问题,是设备对"配置像不像一个真实客户端"
+        // 有隐性要求。
+        let deviceinfo_channel = dtx
+            .make_channel("com.apple.instruments.server.services.deviceinfo")
+            .await?;
+        dtx.call_method_on(&deviceinfo_channel, Some("sysmonProcessAttributes"), vec![], true)
+            .await?;
+        let proc_attrs_reply = dtx.read_message_on(&deviceinfo_channel).await?;
+        let Some(plist::Value::Array(proc_attrs)) = proc_attrs_reply.data else {
+            anyhow::bail!("unexpected sysmonProcessAttributes reply: {:#?}", proc_attrs_reply.data);
+        };
+        dtx.call_method_on(&deviceinfo_channel, Some("sysmonSystemAttributes"), vec![], true)
+            .await?;
+        let sys_attrs_reply = dtx.read_message_on(&deviceinfo_channel).await?;
+        let Some(plist::Value::Array(sys_attrs)) = sys_attrs_reply.data else {
+            anyhow::bail!("unexpected sysmonSystemAttributes reply: {:#?}", sys_attrs_reply.data);
+        };
+        println!("got {} procAttrs, {} sysAttrs", proc_attrs.len(), sys_attrs.len());
+
         let channel = dtx
             .make_channel("com.apple.instruments.server.services.sysmontap")
             .await?;
         println!("sysmontap channel opened");
 
-        // setConfig: 参数是一个 NSKeyedArchiver 归档的字典——跟真机联调时
-        // idevice 版本用的字段名一致(`ur`=采样间隔毫秒,`procAttrs`/`sysAttrs`=
-        // 要哪些字段,`cpuUsage`/`physFootprint`=开关,`sampleInterval`=纳秒)。
+        // setConfig: 参数是一个 NSKeyedArchiver 归档的字典——`ur`=输出频率
+        // (毫秒)、`procAttrs`/`sysAttrs`=上面查到的完整属性名列表、
+        // `cpuUsage`/`physFootprint`=开关、`sampleInterval`=采样间隔(纳秒,
+        // 500ms,照抄 pymobiledevice3 实际抓到的值)。
         let mut config = plist::Dictionary::new();
-        config.insert("ur".into(), plist::Value::Integer(1000i64.into()));
+        config.insert("ur".into(), plist::Value::Integer(1i64.into()));
         config.insert("bm".into(), plist::Value::Integer(0i64.into()));
-        config.insert(
-            "procAttrs".into(),
-            plist::Value::Array(vec![plist::Value::String("pid".into())]),
-        );
-        config.insert("sysAttrs".into(), plist::Value::Array(vec![]));
+        config.insert("procAttrs".into(), plist::Value::Array(proc_attrs));
+        config.insert("sysAttrs".into(), plist::Value::Array(sys_attrs));
         config.insert("cpuUsage".into(), plist::Value::Boolean(true));
         config.insert("physFootprint".into(), plist::Value::Boolean(true));
-        config.insert("sampleInterval".into(), plist::Value::Integer(1_000_000_000i64.into()));
+        config.insert("sampleInterval".into(), plist::Value::Integer(500_000_000i64.into()));
 
         dtx.call_method_on(
             &channel,
@@ -73,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
         // start 之后设备会先推一条 ack,再是真正的采样行——跟之前挂在这一步的
         // idevice 版本不一样,这次我们自己的通用 Uid 解析器应该能把 Processes/
         // System 这些字段读出来,不用特殊跳过第一条。
-        for i in 0..5 {
+        for i in 0..150 {
             let started = std::time::Instant::now();
             let msg = match dtx.read_message_on(&channel).await {
                 Ok(msg) => msg,
@@ -82,28 +112,35 @@ async fn main() -> anyhow::Result<()> {
                     break;
                 }
             };
-            println!(
-                "--- message {i} (waited {:?}) identifier={} conversation_index={} channel={} expects_reply={} ---",
-                started.elapsed(),
-                msg.identifier,
-                msg.conversation_index,
-                msg.channel,
-                msg.expects_reply,
-            );
             if msg.expects_reply {
                 dtx.reply_to(&msg).await?;
-                println!("(replied)");
             }
             let Some(data) = &msg.data else {
-                println!("(no data payload)");
+                println!("--- message {i} ({:?}): no data payload ---", started.elapsed());
                 continue;
             };
-            println!("{data:#?}");
-            if let Some(dict) = data.as_dictionary()
-                && (dict.contains_key("Processes") || dict.contains_key("System") || dict.contains_key("SystemCPUUsage"))
-            {
-                println!("FOUND real sysmontap sample data!");
-                return Ok(());
+            // 心跳(`DTTapMessagePlist` 包着的 `{k, heart/tv}`)量很大,压成一行;
+            // 真实采样消息顶层是个数组(每次 tick 可能不止一条采样),不是直接
+            // 一个字典——之前检测漏了这层,导致明明已经收到含 SystemCPUUsage
+            // 的采样数据也没识别出来。
+            let tap_msg = data.as_dictionary().and_then(|d| d.get("DTTapMessagePlist")).and_then(|v| v.as_dictionary());
+            let sample_dict = data.as_dictionary().or_else(|| data.as_array()?.first()?.as_dictionary());
+            if let Some(tap) = tap_msg {
+                if i % 20 == 0 {
+                    println!("--- message {i} ({:?}): DTTapMessagePlist {tap:?} (heartbeats compressed, showing every 20th) ---", started.elapsed());
+                }
+            } else if let Some(dict) = sample_dict {
+                if dict.contains_key("Processes") {
+                    println!("--- message {i} ({:?}): FOUND real per-process sample data! ---", started.elapsed());
+                    println!("{data:#?}");
+                    return Ok(());
+                } else if dict.contains_key("System") || dict.contains_key("SystemCPUUsage") {
+                    println!("--- message {i} ({:?}): system-level sample/header (no Processes yet) ---", started.elapsed());
+                } else {
+                    println!("--- message {i} ({:?}) ---\n{data:#?}", started.elapsed());
+                }
+            } else {
+                println!("--- message {i} ({:?}) ---\n{data:#?}", started.elapsed());
             }
         }
 

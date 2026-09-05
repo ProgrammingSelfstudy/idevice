@@ -1,6 +1,8 @@
-//! usbmuxd 的帧协议——本机 unix socket(`/var/run/usbmuxd`)上跑的是一套很朴素
-//! 的定长头 + plist body 协议,协议本身没有官方文档,这里的字段布局是从公开的
-//! libimobiledevice 生态里确认过的(这次重写全程真机测过,不是照抄凭空猜的)：
+//! usbmuxd 的帧协议——不管底层是 Unix socket(macOS/Linux)还是 TCP
+//! (Windows,见 `lib.rs` 顶部注释),线上跑的都是同一套很朴素的定长头 +
+//! plist body 协议,协议本身没有官方文档,这里的字段布局是从公开的
+//! libimobiledevice 生态里确认过的(Unix socket 这条路径这次重写全程真机
+//! 测过,不是照抄凭空猜的;TCP 那条路径见 `lib.rs` 里单独的可信度说明)：
 //!
 //! ```text
 //! [4B LE size(含这16字节头本身)][4B LE version][4B LE message_type][4B LE tag][plist XML]

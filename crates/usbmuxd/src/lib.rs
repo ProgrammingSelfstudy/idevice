@@ -1,17 +1,38 @@
-//! 纯手写的 usbmuxd 客户端——连本机 `/var/run/usbmuxd`,列设备、读/存配对记录、
-//! 转发到设备上某个端口。不依赖 `idevice`/`libimobiledevice`,协议细节见
-//! `frame.rs` 顶部注释。
+//! 纯手写的 usbmuxd 客户端——连本机 usbmuxd,列设备、读/存配对记录、转发到
+//! 设备上某个端口。不依赖 `idevice`/`libimobiledevice`,协议细节见 `frame.rs`
+//! 顶部注释。
+//!
+//! usbmuxd 本身的传输层两个平台不一样:macOS/Linux 是 Unix socket
+//! (`/var/run/usbmuxd`);Windows 上 Apple Mobile Device Service 走的是本机
+//! TCP 端口(libusbmuxd/pymobiledevice3 在 Windows 上都是连这个端口,不是
+//! 猜的)。`MuxStream` 按平台选一个具体类型,两边都实现 `AsyncRead +
+//! AsyncWrite`,`frame.rs` 的编解码代码完全不用关心跑在哪个传输上面。
+//!
+//! 这条 Windows 路径还没有真机(或者至少真的跑在 Windows 上的 Apple Mobile
+//! Device Service)验证过——端口号、连接细节都是照 libusbmuxd/
+//! pymobiledevice3 的实现抄的,不是这次重写自己测出来的,跟 usbmuxd 协议帧
+//! 本身（真机验证过)不是一个可信度级别。
 //!
 //! 目前只处理 USB 直连场景(这次重写的真机测试环境就是 USB 接的),网络配对的
 //! 设备地址解析(macOS sockaddr 变长编码)先不做,遇到就归到 `Connection::Unknown`。
 
 mod frame;
 
+#[cfg(unix)]
 use std::path::Path;
 
-use tokio::net::UnixStream;
+#[cfg(unix)]
+use tokio::net::UnixStream as MuxStream;
+#[cfg(windows)]
+use tokio::net::TcpStream as MuxStream;
 
+#[cfg(unix)]
 const DEFAULT_SOCKET_PATH: &str = "/var/run/usbmuxd";
+/// Apple Mobile Device Service 在 Windows 上监听的本机 TCP 端口——
+/// libusbmuxd(`socket.c` 的 WIN32 分支)和 pymobiledevice3 的 Windows 传输
+/// 都是连这个端口,数字本身不是随便挑的。
+#[cfg(windows)]
+const DEFAULT_TCP_PORT: u16 = 27015;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsbmuxdError {
@@ -61,23 +82,42 @@ pub struct Device {
 }
 
 pub struct UsbmuxdClient {
-    stream: UnixStream,
+    stream: MuxStream,
 }
 
 impl UsbmuxdClient {
+    #[cfg(unix)]
     pub async fn connect() -> Result<Self> {
         Self::connect_to(DEFAULT_SOCKET_PATH).await
     }
 
+    #[cfg(windows)]
+    pub async fn connect() -> Result<Self> {
+        Self::connect_to_port(DEFAULT_TCP_PORT).await
+    }
+
+    #[cfg(unix)]
     pub async fn connect_to(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let stream =
-            UnixStream::connect(path)
+            MuxStream::connect(path)
                 .await
                 .map_err(|source| UsbmuxdError::Connect {
                     path: path.display().to_string(),
                     source,
                 })?;
+        Ok(Self { stream })
+    }
+
+    #[cfg(windows)]
+    pub async fn connect_to_port(port: u16) -> Result<Self> {
+        let addr = format!("127.0.0.1:{port}");
+        let stream = MuxStream::connect(&addr)
+            .await
+            .map_err(|source| UsbmuxdError::Connect { path: addr, source })?;
+        // usbmuxd 的帧协议是同步收发的短消息(发一条等一条回包),TCP_NODELAY
+        // 关掉 Nagle 合并小包的延迟,行为上更接近 Unix socket 那条路径。
+        stream.set_nodelay(true).ok();
         Ok(Self { stream })
     }
 
@@ -177,10 +217,10 @@ impl UsbmuxdClient {
         }
     }
 
-    /// 让 usbmuxd 把这条连接转发到设备上的某个端口——转发一旦建立,这条 unix
-    /// socket 连接后续收发的字节就是直接跟设备对话(不再是 usbmuxd 协议本身),
-    /// 所以这个方法消费掉 `self`,把底层 stream 整个交出去给上一层(lockdownd)
-    /// 继续用。
+    /// 让 usbmuxd 把这条连接转发到设备上的某个端口——转发一旦建立,这条底层
+    /// 连接(macOS/Linux 是 Unix socket,Windows 是 TCP)后续收发的字节就是
+    /// 直接跟设备对话(不再是 usbmuxd 协议本身),所以这个方法消费掉 `self`,
+    /// 把底层 stream 整个交出去给上一层(lockdownd)继续用。
     ///
     /// `port` 传主机字节序——usbmuxd 协议本身要大端,这里在内部转,调用方不用
     /// 关心字节序这个坑(之前读 `idevice` 源码时确认过这一步很容易漏,`PortNumber`
@@ -189,7 +229,7 @@ impl UsbmuxdClient {
         mut self,
         device_id: u32,
         port: u16,
-    ) -> Result<UnixStream> {
+    ) -> Result<MuxStream> {
         let port_be = port.to_be();
 
         let mut req = plist::Dictionary::new();

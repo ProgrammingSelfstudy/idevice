@@ -3,6 +3,7 @@
 //!
 //! 用法: cargo run -p installation_proxy --example install -- /path/to/App.ipa
 
+use std::io::Write;
 use std::net::Ipv6Addr;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,10 +11,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use afc::AfcClient;
 use installation_proxy::InstallationProxyClient;
 
+const BAR_WIDTH: i64 = 40;
+
+fn print_progress_bar(percent: i64) {
+    let percent = percent.clamp(0, 100);
+    let filled = (percent * BAR_WIDTH / 100) as usize;
+    let bar = "#".repeat(filled) + &"-".repeat(BAR_WIDTH as usize - filled);
+    print!("\r[{bar}] {percent:>3}%");
+    std::io::stdout().flush().ok();
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 不设 `RUST_LOG` 时 `EnvFilter::from_default_env()` 只放行 ERROR 级别,
+    // 安装进度是 `info!` 打的,会被默认压住看不见——这里默认给 "info",
+    // 用户想看更细的(比如 smoltcp 包级别)还是可以自己设 `RUST_LOG` 覆盖。
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
         .init();
 
     let ipa_path = std::env::args().nth(1).expect("usage: install <path-to-ipa>");
@@ -54,8 +70,9 @@ async fn main() -> anyhow::Result<()> {
     let install_result = {
         let mut instproxy = InstallationProxyClient::connect(&mut stack, server_addr, instproxy_port).await?;
         let result = instproxy
-            .send_package("Install", &remote_path, plist::Dictionary::new())
+            .send_package("Install", &remote_path, plist::Dictionary::new(), print_progress_bar)
             .await;
+        println!();
         instproxy.close().await?;
         result
     };

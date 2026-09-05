@@ -84,13 +84,21 @@ where
     /// 安装/升级一个已经通过 AFC 传到设备 `PackagePath` 位置的包——
     /// `cmd` 传 `"Install"`/`"Upgrade"`。装完之前会收到若干条带
     /// `PercentComplete` 的进度响应,最终一条带 `Status: "Complete"`。
-    pub async fn send_package(&mut self, cmd: &str, package_path: &str, options: plist::Dictionary) -> Result<()> {
+    /// `on_progress` 每收到一条进度响应就会被调一次(参数是 0-100 的百分比),
+    /// 不关心进度的话传 `|_| {}`。
+    pub async fn send_package(
+        &mut self,
+        cmd: &str,
+        package_path: &str,
+        options: plist::Dictionary,
+        on_progress: impl FnMut(i64),
+    ) -> Result<()> {
         let mut req = plist::Dictionary::new();
         req.insert("Command".into(), cmd.into());
         req.insert("ClientOptions".into(), plist::Value::Dictionary(options));
         req.insert("PackagePath".into(), package_path.into());
         self.conn.send_plist(req).await?;
-        self.watch_completion().await
+        self.watch_completion(on_progress).await
     }
 
     /// `cmd` 传 `"Uninstall"`/`"Archive"`/`"Restore"`——按 bundle id 而不是
@@ -100,16 +108,17 @@ where
         cmd: &str,
         bundle_identifier: &str,
         options: plist::Dictionary,
+        on_progress: impl FnMut(i64),
     ) -> Result<()> {
         let mut req = plist::Dictionary::new();
         req.insert("Command".into(), cmd.into());
         req.insert("ApplicationIdentifier".into(), bundle_identifier.into());
         req.insert("ClientOptions".into(), plist::Value::Dictionary(options));
         self.conn.send_plist(req).await?;
-        self.watch_completion().await
+        self.watch_completion(on_progress).await
     }
 
-    async fn watch_completion(&mut self) -> Result<()> {
+    async fn watch_completion(&mut self, mut on_progress: impl FnMut(i64)) -> Result<()> {
         loop {
             let response = self.conn.recv_plist().await?;
             if let Some(err) = response.get("Error") {
@@ -119,8 +128,9 @@ where
                     .unwrap_or("");
                 return Err(InstallationProxyError::DeviceError(format!("{err:?}: {desc}")));
             }
-            if let Some(pct) = response.get("PercentComplete") {
-                tracing::info!(percent = ?pct, "installation progress");
+            if let Some(pct) = response.get("PercentComplete").and_then(|v| v.as_signed_integer()) {
+                tracing::debug!(percent = pct, "installation progress");
+                on_progress(pct);
             }
             if response.get("Status").and_then(|v| v.as_string()) == Some("Complete") {
                 return Ok(());

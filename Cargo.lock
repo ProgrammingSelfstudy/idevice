@@ -290,6 +290,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "instruments-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dtx",
+ "pairing",
+ "plist",
+ "rsd",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tunnel",
+ "usbmuxd",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
